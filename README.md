@@ -1,41 +1,71 @@
 # Amazon Arbitrage Sourcing App
 
-A Python-based sourcing intelligence platform that evaluates retail products
-as Amazon arbitrage opportunities.
+A Python backend that evaluates retail products as Amazon arbitrage opportunities —
+calculating true profitability, analyzing risk signals, and returning a
+**BUY / WATCH / PASS** recommendation through a clean REST API.
 
-Built as both a real business tool and a software engineering portfolio project.
+Built as a real business tool and a software engineering portfolio project.
 
 ---
 
-## What It Does
+## Motivation
 
-Given a product found at a retailer (Kohl's, Walmart, Target, etc.), the app:
+Most Amazon arbitrage tools are black boxes. They give you a number but not the reasoning,
+and they don't account for your actual costs — cashback portals, prep centers, return risk,
+storage overhead.
 
-1. Matches it to an Amazon listing via ASIN
+This app is different. Every calculation is explicit, every threshold is configurable,
+and every layer is independently testable. The goal is a sourcing platform I actually
+trust because I built it and understand every decision inside it.
+
+This project demonstrates:
+
+- **Clean architecture** — separation of concerns across models, services, and API layers
+- **Test-driven development** — 27 passing tests across all modules
+- **FastAPI** — typed request/response models, auto-generated Swagger docs
+- **Modular design** — swap mock data for real APIs without touching business logic
+- **Real business logic** — not a tutorial clone, solves an actual sourcing problem
+
+---
+
+## How It Works
+
+Submit a retail product with cost assumptions. The pipeline:
+
+1. Matches the product to an Amazon listing via ASIN
 2. Calculates true profitability after all real costs
-3. Analyzes risk signals (BSR, seller count, return risk)
+3. Analyzes risk signals — BSR, seller count, return risk
 4. Returns a **BUY / WATCH / PASS** recommendation with reasons
 
 ---
 
 ## Architecture
 
+```
 Retailer Product + Cost Assumptions
-↓
-SourcingService          ← orchestrates the pipeline
-↓
-AmazonClient             ← fetches Amazon product data (mock → Keepa → SP-API)
-↓
-ProfitCalculator         ← pure financial math
-↓
-RecommendationEngine     ← applies thresholds, returns Buy/Watch/Pass
-↓
-FastAPI /evaluate        ← HTTP interface
+          │
+          ▼
+   SourcingService          ← orchestrates the pipeline
+          │
+          ▼
+   AmazonClient             ← fetches Amazon product data
+          │                   (mock now → Keepa → SP-API later)
+          ▼
+   ProfitCalculator         ← pure financial math, retailer-agnostic
+          │
+          ▼
+   RecommendationEngine     ← applies thresholds, returns Buy/Watch/Pass
+          │
+          ▼
+   FastAPI /evaluate        ← typed HTTP interface with Swagger UI
+```
 
-### Module Map
+---
+
+## Module Map
 
 | Module | Location | Purpose |
-|---|---|---|
+|--------|----------|---------|
 | Product | `app/models/product.py` | Retailer sourcing opportunity data |
 | ProfitCalculator | `app/calculations/profit_calculator.py` | True cost and ROI math |
 | AmazonClient | `app/amazon/amazon_client.py` | Amazon data interface + mock |
@@ -47,43 +77,31 @@ FastAPI /evaluate        ← HTTP interface
 
 ## Key Design Decisions
 
-- **Profit calculator is retailer-agnostic** — only pure math, no retailer logic
+- **Profit calculator is retailer-agnostic** — pure math only, no retailer-specific logic
 - **Product and ProfitResult are separate** — product facts vs. derived calculations
-- **AmazonClient is an interface** — MockAmazonClient used now, real API swapped in later
-- **RecommendationConfig is injectable** — default thresholds work out of the box,
-  overridable per use case
-- **deal_resolver deferred** — retailer-specific discount parsing added when first
-  real scraper is built
-
----
-
-## Tech Stack
-
-- Python 3.13
-- FastAPI
-- pytest
-- Pydantic (via FastAPI)
-- Keepa API *(planned)*
-- Amazon SP-API *(planned)*
+- **AmazonClient is an interface** — MockAmazonClient used now, real API swapped in later without touching business logic
+- **RecommendationConfig is injectable** — sensible defaults, fully overridable per use case
+- **deal_resolver deferred** — retailer discount parsing added when first real scraper is built
 
 ---
 
 ## Project Structure
 
+```
 amazon-arbitrage-app/
 ├── app/
-│   ├── main.py                   # FastAPI app entry point
+│   ├── main.py                        # FastAPI app entry point
 │   ├── api/
-│   │   └── routes.py             # HTTP endpoints
+│   │   └── routes.py                  # HTTP endpoints + Pydantic models
 │   ├── amazon/
-│   │   └── amazon_client.py      # AmazonClient interface + MockAmazonClient
+│   │   └── amazon_client.py           # AmazonClient interface + MockAmazonClient
 │   ├── calculations/
-│   │   └── profit_calculator.py  # Profit / ROI / margin math
+│   │   └── profit_calculator.py       # Profit / ROI / margin math
 │   ├── models/
-│   │   └── product.py            # Product dataclass
+│   │   └── product.py                 # Product dataclass
 │   └── services/
-│       ├── sourcing_service.py       # Pipeline orchestrator
-│       └── recommendation_engine.py  # Buy/Watch/Pass logic
+│       ├── sourcing_service.py        # Pipeline orchestrator
+│       └── recommendation_engine.py   # Buy/Watch/Pass logic
 ├── tests/
 │   ├── test_amazon_client.py
 │   ├── test_product.py
@@ -94,6 +112,18 @@ amazon-arbitrage-app/
 ├── requirements.txt
 ├── pytest.ini
 └── README.md
+```
+
+---
+
+## Tech Stack
+
+- **Python 3.13**
+- **FastAPI** — REST API with auto-generated Swagger docs
+- **Pydantic** — typed request and response validation
+- **pytest** — 27 tests across all modules
+- **Keepa API** *(planned)*
+- **Amazon SP-API** *(planned)*
 
 ---
 
@@ -103,13 +133,23 @@ amazon-arbitrage-app/
 git clone <repo-url>
 cd amazon-arbitrage-app
 python -m venv venv
+```
 
-# Windows
+**Windows:**
+
+```cmd
 venv\Scripts\activate
+```
 
-# Mac/Linux
+**Mac / Linux:**
+
+```bash
 source venv/bin/activate
+```
 
+**Install dependencies:**
+
+```bash
 pip install -r requirements.txt
 ```
 
@@ -121,7 +161,7 @@ pip install -r requirements.txt
 pytest -v
 ```
 
-Expected output: **27 tests passing**
+Expected: **27 tests passing** across 6 test files.
 
 ---
 
@@ -194,45 +234,61 @@ Visit `http://127.0.0.1:8000/docs` for interactive Swagger UI.
 ## Cost Assumptions Reference
 
 | Field | Description | Default |
-|---|---|---|
+|-------|-------------|---------|
 | `amazon_referral_fee_percent` | Amazon referral fee % | 15.0 |
-| `fba_fee` | FBA fulfillment fee | 0.0 |
-| `shipping_to_you` | Retailer shipping cost | 0.0 |
-| `shipping_to_amazon` | Cost to ship into Amazon | 0.0 |
-| `prep_cost` | Labels, poly bags, labor | 0.0 |
+| `fba_fee` | FBA fulfillment fee ($) | 0.0 |
+| `shipping_to_you` | Retailer shipping cost ($) | 0.0 |
+| `shipping_to_amazon` | Cost to ship into Amazon ($) | 0.0 |
+| `prep_cost` | Labels, poly bags, labor ($) | 0.0 |
 | `cashback_percent` | Portal cashback % on buy cost | 0.0 |
 | `sales_tax_percent` | Tax % on purchase | 0.0 |
-| `coupon_discount` | Flat dollar coupon/discount | 0.0 |
-| `storage_cost` | Estimated storage overhead | 0.0 |
+| `coupon_discount` | Flat dollar coupon or discount ($) | 0.0 |
+| `storage_cost` | Estimated storage overhead ($) | 0.0 |
 | `return_risk_percent` | Return cost as % of sell price | 0.0 |
-| `misc_buffer` | Catch-all cost buffer | 0.0 |
+| `misc_buffer` | Catch-all cost buffer ($) | 0.0 |
 
 ---
 
-## Recommendation Thresholds (Defaults)
+## Recommendation Thresholds
+
+Defaults reflect a solid arbitrage standard. All thresholds are configurable
+via `RecommendationConfig`.
 
 | Signal | BUY | WATCH | PASS |
-|---|---|---|---|
+|--------|-----|-------|------|
 | ROI | ≥ 30% | ≥ 15% | < 15% |
 | Margin | ≥ 15% | any | — |
 | Seller count | ≤ 20 | > 20 flags | — |
 | BSR | ≤ 150,000 | > 150k flags | — |
 
-Thresholds are fully configurable via `RecommendationConfig`.
+---
+
+## Current Status
+
+| Module | Tests | Status |
+|--------|-------|--------|
+| Product model | 2 | ✅ Passing |
+| Profit calculator | 2 | ✅ Passing |
+| Amazon client + mock | 6 | ✅ Passing |
+| Sourcing service | 6 | ✅ Passing |
+| Recommendation engine | 7 | ✅ Passing |
+| FastAPI /evaluate | 4 | ✅ Passing |
+| **Total** | **27** | ✅ **All passing** |
 
 ---
 
 ## Roadmap
 
-- [x] Profit calculator
-- [x] Product model
-- [x] Amazon client interface + mock
-- [x] Sourcing service pipeline
-- [x] Recommendation engine
-- [x] FastAPI /evaluate endpoint
-- [ ] Keepa API integration
-- [ ] First retailer scraper (Kohl's)
-- [ ] Additional retailers (Walmart, Target)
-- [ ] React dashboard
+- [x] Profit calculator — true cost math with all real fees
+- [x] Product model — clean sourcing opportunity data structure
+- [x] Amazon client interface + MockAmazonClient
+- [x] Sourcing service pipeline — end-to-end orchestration
+- [x] Recommendation engine — Buy/Watch/Pass with configurable thresholds
+- [x] FastAPI `/evaluate` endpoint with Swagger UI
+- [ ] Keepa API integration — real price history, BSR, seller count
+- [ ] First retailer scraper — Kohl's
+- [ ] Additional retailers — Walmart, Target
+- [ ] deal_resolver — retailer-specific discount and coupon parsing
+- [ ] React dashboard — visual sourcing interface
 - [ ] Alerts and deal monitoring
-- [ ] Return risk scoring from review sentiment
+- [ ] Return risk scoring from review sentiment analysis
