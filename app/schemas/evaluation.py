@@ -17,21 +17,37 @@ class ProductInput(BaseModel):
 
     asin: Optional[str] = None
     amazon_price: Optional[float] = Field(default=None, ge=0)
-    amazon_bsr: Optional[int] = Field(default=None, ge=0)
+    amazon_bsr: Optional[int] = Field(default=None, gt=0)
     amazon_category: Optional[str] = None
 
 
 class CostAssumptionsInput(BaseModel):
-    amazon_referral_fee_percent: float = Field(default=15.0, ge=0)
+    amazon_referral_fee_percent: float = Field(
+        default=15.0,
+        ge=0,
+        le=100,
+    )
     fba_fee: float = Field(default=0.0, ge=0)
     shipping_to_you: float = Field(default=0.0, ge=0)
     shipping_to_amazon: float = Field(default=0.0, ge=0)
     prep_cost: float = Field(default=0.0, ge=0)
-    cashback_percent: float = Field(default=0.0, ge=0)
-    sales_tax_percent: float = Field(default=0.0, ge=0)
+    cashback_percent: float = Field(
+        default=0.0,
+        ge=0,
+        le=100,
+    )
+    sales_tax_percent: float = Field(
+        default=0.0,
+        ge=0,
+        le=30,
+    )
     coupon_discount: float = Field(default=0.0, ge=0)
     storage_cost: float = Field(default=0.0, ge=0)
-    return_risk_percent: float = Field(default=0.0, ge=0)
+    return_risk_percent: float = Field(
+        default=0.0,
+        ge=0,
+        le=100,
+    )
     misc_buffer: float = Field(default=0.0, ge=0)
 
 
@@ -49,8 +65,12 @@ class AmazonProductOutput(BaseModel):
     category: Optional[str] = None
     current_price: Optional[float] = None
     bsr: Optional[int] = None
-    seller_count: Optional[int] = None
-    review_rating: Optional[float] = None
+    seller_count: Optional[int] = Field(default=None, ge=0)
+    review_rating: Optional[float] = Field(
+        default=None,
+        ge=0,
+        le=5,
+    )
 
 
 class ProfitResultOutput(BaseModel):

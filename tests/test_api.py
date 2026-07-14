@@ -170,3 +170,72 @@ def test_evaluate_rejects_negative_cost_assumption():
     )
 
     assert response.status_code == 422
+
+def test_evaluate_rejects_zero_amazon_bsr():
+    response = client.post(
+        "/evaluate",
+        json={
+            "product": {
+                "name": "Test Product",
+                "asin": "B000TEST01",
+                "retailer_price": 20.00,
+                "amazon_bsr": 0,
+            }
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_evaluate_rejects_cashback_above_100_percent():
+    response = client.post(
+        "/evaluate",
+        json={
+            "product": {
+                "name": "Test Product",
+                "asin": "B000TEST01",
+                "retailer_price": 20.00,
+            },
+            "assumptions": {
+                "cashback_percent": 101,
+            },
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_evaluate_rejects_sales_tax_above_30_percent():
+    response = client.post(
+        "/evaluate",
+        json={
+            "product": {
+                "name": "Test Product",
+                "asin": "B000TEST01",
+                "retailer_price": 20.00,
+            },
+            "assumptions": {
+                "sales_tax_percent": 31,
+            },
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_evaluate_rejects_return_risk_above_100_percent():
+    response = client.post(
+        "/evaluate",
+        json={
+            "product": {
+                "name": "Test Product",
+                "asin": "B000TEST01",
+                "retailer_price": 20.00,
+            },
+            "assumptions": {
+                "return_risk_percent": 101,
+            },
+        },
+    )
+
+    assert response.status_code == 422
