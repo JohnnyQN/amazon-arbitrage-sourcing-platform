@@ -319,6 +319,7 @@ Current coverage:
 - ✅ Mock Amazon client
 - ✅ REST API
 - ✅ Automated testing
+- ✅ Domain-specific exceptions with proper HTTP 404 and 422 responses
 
 ## Planned
 
