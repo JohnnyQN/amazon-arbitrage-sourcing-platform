@@ -1,6 +1,8 @@
 # Amazon Arbitrage Sourcing Platform
 
-A Python backend that evaluates retail products as Amazon arbitrage opportunities by calculating true profitability, analyzing marketplace risk, and returning a **BUY / WATCH /PASS** recommendation through a clean REST API.
+[![CI](https://github.com/JohnnyQN/amazon-arbitrage-sourcing-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/JohnnyQN/amazon-arbitrage-sourcing-platform/actions/workflows/ci.yml)
+
+A Python backend that evaluates retail products as Amazon arbitrage opportunities by calculating true profitability, analyzing marketplace risk, and returning a **BUY / WATCH / PASS** recommendation through a clean REST API.
 
 Built as both a real business tool and a software engineering portfolio project.
 
