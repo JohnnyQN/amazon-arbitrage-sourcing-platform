@@ -1,7 +1,13 @@
+import pytest
 from datetime import date
 
 from app.amazon.amazon_client import MockAmazonClient
 from app.models.product import Product
+from app.services.exceptions import (
+    AmazonProductNotFoundError,
+    MissingAsinError,
+    MissingRetailerPriceError,
+)
 from app.services.recommendation_engine import Recommendation, RecommendationConfig
 from app.services.sourcing_service import CostAssumptions, SourcingService
 
@@ -24,6 +30,8 @@ def make_service(config=None):
     )
 
 
+# --- Success cases ---
+
 def test_evaluate_product_success():
     service = make_service()
     product = make_nike_product()
@@ -36,13 +44,10 @@ def test_evaluate_product_success():
 
     result = service.evaluate_product(product, assumptions)
 
-    assert result.error is None
     assert result.amazon_product is not None
     assert result.amazon_product.asin == "B000EXAMPLE"
-    assert result.profit_input is not None
     assert result.profit_input.buy_cost == 45.00
     assert result.profit_input.amazon_sell_price == 89.99
-    assert result.profit_result is not None
     assert result.profit_result.net_profit > 0
     assert result.recommendation is not None
 
@@ -68,7 +73,6 @@ def test_evaluate_product_returns_recommendation():
 
 
 def test_evaluate_product_custom_config_affects_recommendation():
-    # Strict config — very high ROI bar
     strict_config = RecommendationConfig(
         min_roi_for_buy=80.0,
         min_roi_for_watch=50.0,
@@ -79,23 +83,35 @@ def test_evaluate_product_custom_config_affects_recommendation():
 
     result = service.evaluate_product(product, assumptions)
 
-    # Nike shoe bought at $45, sold at $89.99 won't hit 80% ROI,
-    # but it does exceed the 50% WATCH threshold.
     assert result.recommendation.recommendation == Recommendation.WATCH
 
 
-def test_evaluate_product_no_asin():
+# --- Failure cases: domain exceptions ---
+
+def test_evaluate_product_no_asin_raises():
+    """
+    A product submitted with no ASIN cannot be matched to Amazon.
+    SourcingService should raise MissingAsinError immediately
+    without attempting any lookup.
+    """
     service = make_service()
-    product = Product(name="Mystery Item", retailer_price=20.00)
+    product = Product(
+        name="Mystery Item",
+        retailer_price=20.00,
+        # asin intentionally omitted - defaults to None
+    )
 
-    result = service.evaluate_product(product, CostAssumptions())
-
-    assert result.error == "No matching Amazon product found for ASIN."
-    assert result.profit_result is None
-    assert result.recommendation is None
+    with pytest.raises(MissingAsinError):
+        service.evaluate_product(product, CostAssumptions())
 
 
-def test_evaluate_product_asin_not_found():
+def test_evaluate_product_asin_not_found_raises():
+    """
+    A product with an ASIN that returns no Amazon listing
+    should raise AmazonProductNotFoundError.
+    This is distinct from a missing ASIN - the ASIN was provided
+    but the lookup failed to find a match.
+    """
     service = make_service()
     product = Product(
         name="Ghost Product",
@@ -103,17 +119,53 @@ def test_evaluate_product_asin_not_found():
         retailer_price=20.00,
     )
 
-    result = service.evaluate_product(product, CostAssumptions())
-
-    assert result.error == "No matching Amazon product found for ASIN."
-    assert result.recommendation is None
+    with pytest.raises(AmazonProductNotFoundError):
+        service.evaluate_product(product, CostAssumptions())
 
 
-def test_evaluate_product_no_retailer_price():
+def test_evaluate_product_no_retailer_price_raises():
+    """
+    A product with no retailer price cannot have profit calculated.
+    SourcingService should raise MissingRetailerPriceError.
+    """
     service = make_service()
-    product = Product(name="Nike Air Max 90", asin="B000EXAMPLE")
+    product = Product(
+        name="Nike Air Max 90",
+        asin="B000EXAMPLE",
+        # retailer_price intentionally omitted - defaults to None
+    )
 
-    result = service.evaluate_product(product, CostAssumptions())
+    with pytest.raises(MissingRetailerPriceError):
+        service.evaluate_product(product, CostAssumptions())
 
-    assert result.error == "Product has no retailer price."
-    assert result.recommendation is None
+
+def test_missing_asin_error_message_is_informative():
+    """
+    The exception message should name the product so the caller
+    can identify which product failed in a multi-product context.
+    """
+    service = make_service()
+    product = Product(name="Unnamed Product", retailer_price=20.00)
+
+    with pytest.raises(MissingAsinError) as exc_info:
+        service.evaluate_product(product, CostAssumptions())
+
+    assert "Unnamed Product" in str(exc_info.value)
+
+
+def test_amazon_not_found_error_message_includes_asin():
+    """
+    The exception message should include the ASIN that was not found
+    so the caller knows exactly which lookup failed.
+    """
+    service = make_service()
+    product = Product(
+        name="Ghost Product",
+        asin="DOESNOTEXIST",
+        retailer_price=20.00,
+    )
+
+    with pytest.raises(AmazonProductNotFoundError) as exc_info:
+        service.evaluate_product(product, CostAssumptions())
+
+    assert "DOESNOTEXIST" in str(exc_info.value)

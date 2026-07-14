@@ -1,12 +1,18 @@
-from fastapi import APIRouter
-from pydantic import BaseModel
-from typing import Optional
 from datetime import date
+from typing import Optional
+
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
 from app.amazon.amazon_client import MockAmazonClient
 from app.models.product import Product
-from app.services.sourcing_service import CostAssumptions, SourcingService
+from app.services.exceptions import (
+    AmazonProductNotFoundError,
+    MissingAsinError,
+    MissingRetailerPriceError,
+)
 from app.services.recommendation_engine import RecommendationConfig
+from app.services.sourcing_service import CostAssumptions, SourcingService
 
 router = APIRouter()
 
@@ -78,10 +84,9 @@ class RecommendationOutput(BaseModel):
 
 class EvaluateResponse(BaseModel):
     product_name: str
-    amazon_product: Optional[AmazonProductOutput] = None
-    profit_result: Optional[ProfitResultOutput] = None
-    recommendation: Optional[RecommendationOutput] = None
-    error: Optional[str] = None
+    amazon_product: AmazonProductOutput
+    profit_result: ProfitResultOutput
+    recommendation: RecommendationOutput
 
 
 # --- Endpoint ---
@@ -91,6 +96,10 @@ def evaluate_product(request: EvaluateRequest):
     """
     Evaluate a retail product as an Amazon arbitrage opportunity.
     Returns profit analysis and Buy/Watch/Pass recommendation.
+
+    Raises:
+        422 if the product is missing an ASIN or retailer price.
+        404 if the ASIN does not match a known Amazon listing.
     """
     product = Product(
         name=request.product.name,
@@ -126,13 +135,17 @@ def evaluate_product(request: EvaluateRequest):
         recommendation_config=RecommendationConfig(),
     )
 
-    result = service.evaluate_product(product, assumptions)
+    try:
+        result = service.evaluate_product(product, assumptions)
 
-    if result.error:
-        return EvaluateResponse(
-            product_name=product.name,
-            error=result.error,
-        )
+    except MissingAsinError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    except AmazonProductNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+    except MissingRetailerPriceError as e:
+        raise HTTPException(status_code=422, detail=str(e))
 
     return EvaluateResponse(
         product_name=product.name,

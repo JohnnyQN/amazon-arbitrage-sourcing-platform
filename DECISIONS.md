@@ -80,3 +80,18 @@ Affects future retailer scraper design, ASIN matching logic, and dashboard layou
 Single-product /evaluate endpoint is not affected.
 ## Status
 Intentionally deferred until retailer scraper work begins.
+
+# Decision 004: Deferred - AmazonProductNotFoundError Used for Missing Price
+Date: 2026-07-13
+## Current Behavior
+SourcingService raises AmazonProductNotFoundError when an Amazon listing exists
+but has no current_price. This is semantically incorrect - the product was found,
+but its price data is unusable.
+## Correct Future Behavior
+A dedicated MissingAmazonPriceError (or similar) should handle this case separately.
+HTTP mapping would likely be 422 - the resource exists but cannot be evaluated.
+## Why Deferred
+No real Amazon data source is connected yet. MockAmazonClient always returns a price.
+The distinction has no practical impact until Keepa or SP-API integration begins.
+## Revisit When
+First real AmazonClient implementation is built.
