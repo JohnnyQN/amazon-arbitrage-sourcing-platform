@@ -1,11 +1,14 @@
-from datetime import date
-from typing import Optional
-
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
 
 from app.amazon.amazon_client import MockAmazonClient
 from app.models.product import Product
+from app.schemas.evaluation import (
+    AmazonProductOutput,
+    EvaluateRequest,
+    EvaluateResponse,
+    ProfitResultOutput,
+    RecommendationOutput,
+)
 from app.services.exceptions import (
     AmazonProductNotFoundError,
     MissingAsinError,
@@ -15,78 +18,6 @@ from app.services.recommendation_engine import RecommendationConfig
 from app.services.sourcing_service import CostAssumptions, SourcingService
 
 router = APIRouter()
-
-
-# --- Request Models ---
-
-class ProductInput(BaseModel):
-    name: str
-    brand: Optional[str] = None
-    upc: Optional[str] = None
-    category: Optional[str] = None
-    retailer_name: Optional[str] = None
-    retailer_price: Optional[float] = None
-    retailer_url: Optional[str] = None
-    date_found: Optional[date] = None
-    asin: Optional[str] = None
-    amazon_price: Optional[float] = None
-    amazon_bsr: Optional[int] = None
-    amazon_category: Optional[str] = None
-
-
-class CostAssumptionsInput(BaseModel):
-    amazon_referral_fee_percent: float = 15.0
-    fba_fee: float = 0.0
-    shipping_to_you: float = 0.0
-    shipping_to_amazon: float = 0.0
-    prep_cost: float = 0.0
-    cashback_percent: float = 0.0
-    sales_tax_percent: float = 0.0
-    coupon_discount: float = 0.0
-    storage_cost: float = 0.0
-    return_risk_percent: float = 0.0
-    misc_buffer: float = 0.0
-
-
-class EvaluateRequest(BaseModel):
-    product: ProductInput
-    assumptions: CostAssumptionsInput = CostAssumptionsInput()
-
-
-# --- Response Models ---
-
-class AmazonProductOutput(BaseModel):
-    asin: str
-    title: str
-    brand: Optional[str] = None
-    category: Optional[str] = None
-    current_price: Optional[float] = None
-    bsr: Optional[int] = None
-    seller_count: Optional[int] = None
-    review_rating: Optional[float] = None
-
-
-class ProfitResultOutput(BaseModel):
-    net_profit: float
-    roi_percent: float
-    margin_percent: float
-    total_cost: float
-    total_fees: float
-    cashback_amount: float
-    sales_tax_amount: float
-    return_risk_cost: float
-
-
-class RecommendationOutput(BaseModel):
-    recommendation: str
-    reasons: list[str]
-
-
-class EvaluateResponse(BaseModel):
-    product_name: str
-    amazon_product: AmazonProductOutput
-    profit_result: ProfitResultOutput
-    recommendation: RecommendationOutput
 
 
 # --- Endpoint ---
