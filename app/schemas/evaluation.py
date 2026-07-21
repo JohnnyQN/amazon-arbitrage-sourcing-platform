@@ -90,6 +90,7 @@ class RecommendationOutput(BaseModel):
 
 
 class EvaluateResponse(BaseModel):
+    evaluation_id: int
     product_name: str
     amazon_product: AmazonProductOutput
     profit_result: ProfitResultOutput

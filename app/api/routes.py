@@ -1,7 +1,10 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.amazon.amazon_client import MockAmazonClient
+from app.api.dependencies import get_evaluation_repository
+from app.mappers.evaluation_mapper import build_evaluation_record
 from app.models.product import Product
+from app.repositories.evaluation_repository import EvaluationRepository
 from app.schemas.evaluation import (
     AmazonProductOutput,
     EvaluateRequest,
@@ -20,13 +23,15 @@ from app.services.sourcing_service import CostAssumptions, SourcingService
 router = APIRouter()
 
 
-# --- Endpoint ---
-
 @router.post("/evaluate", response_model=EvaluateResponse)
-def evaluate_product(request: EvaluateRequest):
+def evaluate_product(
+    request: EvaluateRequest,
+    repo: EvaluationRepository = Depends(get_evaluation_repository),
+):
     """
     Evaluate a retail product as an Amazon arbitrage opportunity.
     Returns profit analysis and Buy/Watch/Pass recommendation.
+    Persists successful evaluations and returns the generated evaluation_id.
 
     Raises:
         422 if the product is missing an ASIN or retailer price.
@@ -66,19 +71,31 @@ def evaluate_product(request: EvaluateRequest):
         recommendation_config=RecommendationConfig(),
     )
 
+    # Domain failures raise exceptions — nothing is persisted
     try:
         result = service.evaluate_product(product, assumptions)
-
     except MissingAsinError as e:
         raise HTTPException(status_code=422, detail=str(e))
-
     except AmazonProductNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
-
     except MissingRetailerPriceError as e:
         raise HTTPException(status_code=422, detail=str(e))
 
+    # Only successful evaluations are persisted
+    record = build_evaluation_record(result, assumptions)
+    saved = repo.save(record)
+
+    # Defensive guard — save() should always return a record with an ID.
+    # If it does not, something is wrong at the repository level and we
+    # should fail loudly rather than return a response with a null ID.
+    if saved.id is None:
+        raise RuntimeError(
+            "Evaluation repository returned a saved record without an ID. "
+            "This indicates a bug in the repository layer."
+        )
+
     return EvaluateResponse(
+        evaluation_id=saved.id,
         product_name=product.name,
         amazon_product=AmazonProductOutput(
             asin=result.amazon_product.asin,
