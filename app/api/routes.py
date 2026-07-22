@@ -1,11 +1,18 @@
-from datetime import date
-from typing import Optional
-
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.amazon.amazon_client import MockAmazonClient
+from app.api.dependencies import get_evaluation_repository
+from app.mappers.evaluation_mapper import build_evaluation_record
 from app.models.product import Product
+from app.repositories.evaluation_repository import EvaluationRepository
+from app.schemas.evaluation import (
+    AmazonProductOutput,
+    EvaluateRequest,
+    EvaluateResponse,
+    EvaluationRecordResponse,
+    ProfitResultOutput,
+    RecommendationOutput,
+)
 from app.services.exceptions import (
     AmazonProductNotFoundError,
     MissingAsinError,
@@ -17,85 +24,86 @@ from app.services.sourcing_service import CostAssumptions, SourcingService
 router = APIRouter()
 
 
-# --- Request Models ---
+# ---------------------------------------------------------------------------
+# Evaluation history — read-only
+#
+# Route definition order matters. FastAPI matches routes in the order they
+# are registered. /evaluations/asin/{asin} must appear before
+# /evaluations/{evaluation_id} so the literal path segment "asin" is never
+# misinterpreted as an integer evaluation_id, which would cause a 422 before
+# the ASIN route is ever considered.
+# ---------------------------------------------------------------------------
 
-class ProductInput(BaseModel):
-    name: str
-    brand: Optional[str] = None
-    upc: Optional[str] = None
-    category: Optional[str] = None
-    retailer_name: Optional[str] = None
-    retailer_price: Optional[float] = None
-    retailer_url: Optional[str] = None
-    date_found: Optional[date] = None
-    asin: Optional[str] = None
-    amazon_price: Optional[float] = None
-    amazon_bsr: Optional[int] = None
-    amazon_category: Optional[str] = None
-
-
-class CostAssumptionsInput(BaseModel):
-    amazon_referral_fee_percent: float = 15.0
-    fba_fee: float = 0.0
-    shipping_to_you: float = 0.0
-    shipping_to_amazon: float = 0.0
-    prep_cost: float = 0.0
-    cashback_percent: float = 0.0
-    sales_tax_percent: float = 0.0
-    coupon_discount: float = 0.0
-    storage_cost: float = 0.0
-    return_risk_percent: float = 0.0
-    misc_buffer: float = 0.0
+@router.get(
+    "/evaluations",
+    response_model=list[EvaluationRecordResponse],
+)
+def list_evaluations(
+    limit: int = Query(default=50, ge=1, le=200),
+    repo: EvaluationRepository = Depends(get_evaluation_repository),
+):
+    """
+    Return saved evaluations, newest first.
+    Results are capped by limit (default 50, min 1, max 200).
+    Returns an empty list when the database contains no evaluations.
+    """
+    records = repo.list_all(limit=limit)
+    return [EvaluationRecordResponse.model_validate(r) for r in records]
 
 
-class EvaluateRequest(BaseModel):
-    product: ProductInput
-    assumptions: CostAssumptionsInput = CostAssumptionsInput()
+@router.get(
+    "/evaluations/asin/{asin}",
+    response_model=list[EvaluationRecordResponse],
+)
+def list_evaluations_by_asin(
+    asin: str,
+    limit: int = Query(default=50, ge=1, le=200),
+    repo: EvaluationRepository = Depends(get_evaluation_repository),
+):
+    """
+    Return saved evaluations for a specific ASIN, newest first.
+    Returns an empty list when no records exist for the ASIN — not 404.
+    Results are capped by limit (default 50, min 1, max 200).
+    """
+    records = repo.list_by_asin(asin, limit=limit)
+    return [EvaluationRecordResponse.model_validate(r) for r in records]
 
 
-# --- Response Models ---
-
-class AmazonProductOutput(BaseModel):
-    asin: str
-    title: str
-    brand: Optional[str] = None
-    category: Optional[str] = None
-    current_price: Optional[float] = None
-    bsr: Optional[int] = None
-    seller_count: Optional[int] = None
-    review_rating: Optional[float] = None
-
-
-class ProfitResultOutput(BaseModel):
-    net_profit: float
-    roi_percent: float
-    margin_percent: float
-    total_cost: float
-    total_fees: float
-    cashback_amount: float
-    sales_tax_amount: float
-    return_risk_cost: float
+@router.get(
+    "/evaluations/{evaluation_id}",
+    response_model=EvaluationRecordResponse,
+)
+def get_evaluation(
+    evaluation_id: int,
+    repo: EvaluationRepository = Depends(get_evaluation_repository),
+):
+    """
+    Return a single evaluation snapshot by ID.
+    Returns 404 when no record exists with that ID.
+    The error detail includes the requested ID.
+    """
+    record = repo.get_by_id(evaluation_id)
+    if record is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No evaluation found with id {evaluation_id}.",
+        )
+    return EvaluationRecordResponse.model_validate(record)
 
 
-class RecommendationOutput(BaseModel):
-    recommendation: str
-    reasons: list[str]
-
-
-class EvaluateResponse(BaseModel):
-    product_name: str
-    amazon_product: AmazonProductOutput
-    profit_result: ProfitResultOutput
-    recommendation: RecommendationOutput
-
-
-# --- Endpoint ---
+# ---------------------------------------------------------------------------
+# Sourcing evaluation
+# ---------------------------------------------------------------------------
 
 @router.post("/evaluate", response_model=EvaluateResponse)
-def evaluate_product(request: EvaluateRequest):
+def evaluate_product(
+    request: EvaluateRequest,
+    repo: EvaluationRepository = Depends(get_evaluation_repository),
+):
     """
     Evaluate a retail product as an Amazon arbitrage opportunity.
     Returns profit analysis and Buy/Watch/Pass recommendation.
+    Persists successful evaluations and returns the generated evaluation_id.
 
     Raises:
         422 if the product is missing an ASIN or retailer price.
@@ -135,19 +143,31 @@ def evaluate_product(request: EvaluateRequest):
         recommendation_config=RecommendationConfig(),
     )
 
+    # Domain failures raise exceptions — nothing is persisted
     try:
         result = service.evaluate_product(product, assumptions)
-
     except MissingAsinError as e:
         raise HTTPException(status_code=422, detail=str(e))
-
     except AmazonProductNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
-
     except MissingRetailerPriceError as e:
         raise HTTPException(status_code=422, detail=str(e))
 
+    # Only successful evaluations are persisted
+    record = build_evaluation_record(result, assumptions)
+    saved = repo.save(record)
+
+    # Defensive guard — save() must always return a record with an ID.
+    # A missing ID indicates a bug in the repository layer and should
+    # fail loudly rather than return a response with a null evaluation_id.
+    if saved.id is None:
+        raise RuntimeError(
+            "Evaluation repository returned a saved record without an ID. "
+            "This indicates a bug in the repository layer."
+        )
+
     return EvaluateResponse(
+        evaluation_id=saved.id,
         product_name=product.name,
         amazon_product=AmazonProductOutput(
             asin=result.amazon_product.asin,

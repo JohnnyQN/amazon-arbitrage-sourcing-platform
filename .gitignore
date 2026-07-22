@@ -9,3 +9,9 @@ htmlcov/
 .idea/
 .DS_Store
 Thumbs.db
+
+
+# SQLite database files
+data/*.db
+data/*.db-shm
+data/*.db-wal
