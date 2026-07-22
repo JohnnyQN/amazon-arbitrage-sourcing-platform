@@ -27,24 +27,30 @@ class EvaluationRepository:
     def save(self, record: EvaluationRecord) -> EvaluationRecord:
         """
         Insert a new evaluation row and return a new EvaluationRecord
-        with its generated database ID populated.
+        with its generated database ID and normalized UTC timestamp populated.
 
         The input record is never mutated — frozen=True enforces this.
-        dataclasses.replace() constructs a new instance with id set.
+        dataclasses.replace() constructs a new instance with id and
+        evaluated_at both set to the post-normalization values.
 
-        evaluated_at must be timezone-aware. Naive datetimes raise ValueError
+        evaluated_at must be truly timezone-aware: both tzinfo and
+        utcoffset() must be non-None. Naive datetimes raise ValueError
         before any database operation is attempted.
         """
-        if record.evaluated_at.tzinfo is None:
+        if (
+            record.evaluated_at.tzinfo is None
+            or record.evaluated_at.utcoffset() is None
+        ):
             raise ValueError(
                 "evaluated_at must be timezone-aware. "
                 "Use datetime.now(timezone.utc) or attach tzinfo explicitly. "
                 f"Got: {record.evaluated_at!r}"
             )
 
-        # Normalize to UTC and format with microseconds for consistent storage
+        # Normalize to UTC and serialize with microsecond precision for
+        # consistent storage and correct lexicographic ordering.
         evaluated_at_utc = record.evaluated_at.astimezone(timezone.utc)
-        evaluated_at_iso = evaluated_at_utc.isoformat()
+        evaluated_at_iso = evaluated_at_utc.isoformat(timespec="microseconds")
         reasons_json = json.dumps(record.recommendation_reasons)
 
         with get_connection(self.db_path) as conn:
@@ -98,9 +104,13 @@ class EvaluationRepository:
             )
             generated_id = cursor.lastrowid
 
-        # Return a new frozen record with id populated.
-        # The original record is unchanged — frozen=True prevents mutation.
-        return replace(record, id=generated_id)
+        # Return a new frozen record with both the generated ID and the
+        # normalized UTC timestamp. The original record is unchanged.
+        return replace(
+            record,
+            id=generated_id,
+            evaluated_at=evaluated_at_utc,
+        )
 
     def get_by_id(self, evaluation_id: int) -> Optional[EvaluationRecord]:
         """
@@ -116,31 +126,70 @@ class EvaluationRepository:
             return None
         return self._row_to_record(row)
 
-    def list_all(self) -> list[EvaluationRecord]:
+    def list_all(self, limit: Optional[int] = None) -> list[EvaluationRecord]:
         """
-        Return all evaluations ordered by most recent first.
+        Return evaluations ordered by most recent first.
         Ties in evaluated_at are broken by id DESC.
+
+        If limit is provided it must be a positive integer — raises ValueError
+        otherwise. The API maximum of 200 is enforced at the HTTP layer, not here.
+        When limit is None all records are returned, preserving prior behavior.
         """
+        if limit is not None and limit <= 0:
+            raise ValueError(
+                f"limit must be a positive integer, got {limit!r}."
+            )
+
+        if limit is not None:
+            sql = """
+                SELECT * FROM evaluations
+                ORDER BY evaluated_at DESC, id DESC
+                LIMIT ?
+            """
+            params: tuple = (limit,)
+        else:
+            sql = "SELECT * FROM evaluations ORDER BY evaluated_at DESC, id DESC"
+            params = ()
+
         with get_connection(self.db_path) as conn:
-            rows = conn.execute(
-                "SELECT * FROM evaluations ORDER BY evaluated_at DESC, id DESC"
-            ).fetchall()
+            rows = conn.execute(sql, params).fetchall()
         return [self._row_to_record(row) for row in rows]
 
-    def list_by_asin(self, asin: str) -> list[EvaluationRecord]:
+    def list_by_asin(
+        self, asin: str, limit: Optional[int] = None
+    ) -> list[EvaluationRecord]:
         """
-        Return all evaluations for a specific ASIN, most recent first.
+        Return evaluations for a specific ASIN, most recent first.
+        Ties in evaluated_at are broken by id DESC.
         Uses the composite index on (asin, evaluated_at DESC).
+
+        If limit is provided it must be a positive integer — raises ValueError
+        otherwise. The API maximum of 200 is enforced at the HTTP layer, not here.
+        When limit is None all matching records are returned.
         """
-        with get_connection(self.db_path) as conn:
-            rows = conn.execute(
-                """
+        if limit is not None and limit <= 0:
+            raise ValueError(
+                f"limit must be a positive integer, got {limit!r}."
+            )
+
+        if limit is not None:
+            sql = """
                 SELECT * FROM evaluations
                 WHERE asin = ?
                 ORDER BY evaluated_at DESC, id DESC
-                """,
-                (asin,),
-            ).fetchall()
+                LIMIT ?
+            """
+            params = (asin, limit)
+        else:
+            sql = """
+                SELECT * FROM evaluations
+                WHERE asin = ?
+                ORDER BY evaluated_at DESC, id DESC
+            """
+            params = (asin,)
+
+        with get_connection(self.db_path) as conn:
+            rows = conn.execute(sql, params).fetchall()
         return [self._row_to_record(row) for row in rows]
 
     # --- Private helpers ---

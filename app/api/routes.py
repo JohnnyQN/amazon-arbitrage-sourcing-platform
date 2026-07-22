@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.amazon.amazon_client import MockAmazonClient
 from app.api.dependencies import get_evaluation_repository
@@ -9,6 +9,7 @@ from app.schemas.evaluation import (
     AmazonProductOutput,
     EvaluateRequest,
     EvaluateResponse,
+    EvaluationRecordResponse,
     ProfitResultOutput,
     RecommendationOutput,
 )
@@ -22,6 +23,77 @@ from app.services.sourcing_service import CostAssumptions, SourcingService
 
 router = APIRouter()
 
+
+# ---------------------------------------------------------------------------
+# Evaluation history — read-only
+#
+# Route definition order matters. FastAPI matches routes in the order they
+# are registered. /evaluations/asin/{asin} must appear before
+# /evaluations/{evaluation_id} so the literal path segment "asin" is never
+# misinterpreted as an integer evaluation_id, which would cause a 422 before
+# the ASIN route is ever considered.
+# ---------------------------------------------------------------------------
+
+@router.get(
+    "/evaluations",
+    response_model=list[EvaluationRecordResponse],
+)
+def list_evaluations(
+    limit: int = Query(default=50, ge=1, le=200),
+    repo: EvaluationRepository = Depends(get_evaluation_repository),
+):
+    """
+    Return saved evaluations, newest first.
+    Results are capped by limit (default 50, min 1, max 200).
+    Returns an empty list when the database contains no evaluations.
+    """
+    records = repo.list_all(limit=limit)
+    return [EvaluationRecordResponse.model_validate(r) for r in records]
+
+
+@router.get(
+    "/evaluations/asin/{asin}",
+    response_model=list[EvaluationRecordResponse],
+)
+def list_evaluations_by_asin(
+    asin: str,
+    limit: int = Query(default=50, ge=1, le=200),
+    repo: EvaluationRepository = Depends(get_evaluation_repository),
+):
+    """
+    Return saved evaluations for a specific ASIN, newest first.
+    Returns an empty list when no records exist for the ASIN — not 404.
+    Results are capped by limit (default 50, min 1, max 200).
+    """
+    records = repo.list_by_asin(asin, limit=limit)
+    return [EvaluationRecordResponse.model_validate(r) for r in records]
+
+
+@router.get(
+    "/evaluations/{evaluation_id}",
+    response_model=EvaluationRecordResponse,
+)
+def get_evaluation(
+    evaluation_id: int,
+    repo: EvaluationRepository = Depends(get_evaluation_repository),
+):
+    """
+    Return a single evaluation snapshot by ID.
+    Returns 404 when no record exists with that ID.
+    The error detail includes the requested ID.
+    """
+    record = repo.get_by_id(evaluation_id)
+    if record is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No evaluation found with id {evaluation_id}.",
+        )
+    return EvaluationRecordResponse.model_validate(record)
+
+
+# ---------------------------------------------------------------------------
+# Sourcing evaluation
+# ---------------------------------------------------------------------------
 
 @router.post("/evaluate", response_model=EvaluateResponse)
 def evaluate_product(
@@ -85,9 +157,9 @@ def evaluate_product(
     record = build_evaluation_record(result, assumptions)
     saved = repo.save(record)
 
-    # Defensive guard — save() should always return a record with an ID.
-    # If it does not, something is wrong at the repository level and we
-    # should fail loudly rather than return a response with a null ID.
+    # Defensive guard — save() must always return a record with an ID.
+    # A missing ID indicates a bug in the repository layer and should
+    # fail loudly rather than return a response with a null evaluation_id.
     if saved.id is None:
         raise RuntimeError(
             "Evaluation repository returned a saved record without an ID. "

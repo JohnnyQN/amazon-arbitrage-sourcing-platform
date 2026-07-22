@@ -6,18 +6,22 @@ from app.models.evaluation import EvaluationRecord
 from app.repositories.evaluation_repository import EvaluationRepository
 
 
-# --- Fixtures ---
+# ---------------------------------------------------------------------------
+# Fixture
+# ---------------------------------------------------------------------------
 
 @pytest.fixture
 def repo(tmp_path: Path) -> EvaluationRepository:
     """
-    Each test gets a fresh repository backed by a unique temporary file.
+    Each test gets a fresh repository backed by a unique temporary SQLite file.
     pytest's tmp_path fixture guarantees no shared state between tests.
     """
     return EvaluationRepository(db_path=tmp_path / "test_arbitrage.db")
 
 
-# --- Factory ---
+# ---------------------------------------------------------------------------
+# Factory
+# ---------------------------------------------------------------------------
 
 def make_record(**overrides) -> EvaluationRecord:
     """
@@ -76,7 +80,9 @@ def make_record(**overrides) -> EvaluationRecord:
     return EvaluationRecord(**defaults)
 
 
-# --- Table initialization ---
+# ---------------------------------------------------------------------------
+# Table initialization
+# ---------------------------------------------------------------------------
 
 def test_table_is_created_on_init(repo: EvaluationRepository):
     """
@@ -87,7 +93,9 @@ def test_table_is_created_on_init(repo: EvaluationRepository):
     assert repo.list_all() == []
 
 
-# --- Save and generated IDs ---
+# ---------------------------------------------------------------------------
+# Save and generated IDs
+# ---------------------------------------------------------------------------
 
 def test_save_returns_record_with_id(repo: EvaluationRepository):
     """
@@ -129,7 +137,9 @@ def test_save_assigns_incrementing_ids(repo: EvaluationRepository):
     assert second.id == first.id + 1
 
 
-# --- Naive datetime rejection ---
+# ---------------------------------------------------------------------------
+# Naive datetime rejection
+# ---------------------------------------------------------------------------
 
 def test_save_rejects_naive_datetime(repo: EvaluationRepository):
     """
@@ -144,8 +154,51 @@ def test_save_rejects_naive_datetime(repo: EvaluationRepository):
     with pytest.raises(ValueError, match="timezone-aware"):
         repo.save(record)
 
+def test_save_normalizes_timestamp_to_utc(
+    repo: EvaluationRepository,
+):
+    """
+    save() should return the canonical UTC timestamp written to
+    the database, even when the input uses another timezone.
 
-# --- Retrieval by ID ---
+    The original frozen record must remain unchanged, while the
+    saved and retrieved records use the equivalent UTC timestamp.
+    """
+    pacific_offset = timezone(timedelta(hours=-7))
+    local_time = datetime(
+        2026,
+        7,
+        13,
+        5,
+        0,
+        0,
+        tzinfo=pacific_offset,
+    )
+
+    original = make_record(evaluated_at=local_time)
+    saved = repo.save(original)
+
+    assert saved.id is not None
+
+    retrieved = repo.get_by_id(saved.id)
+
+    expected_utc = datetime(
+        2026,
+        7,
+        13,
+        12,
+        0,
+        0,
+        tzinfo=timezone.utc,
+    )
+
+    assert original.evaluated_at == local_time
+    assert saved.evaluated_at == expected_utc
+    assert retrieved is not None
+    assert retrieved.evaluated_at == expected_utc
+# ---------------------------------------------------------------------------
+# Retrieval by ID
+# ---------------------------------------------------------------------------
 
 def test_get_by_id_returns_saved_record(repo: EvaluationRepository):
     """
@@ -168,7 +221,9 @@ def test_get_by_id_unknown_returns_none(repo: EvaluationRepository):
     assert repo.get_by_id(99999) is None
 
 
-# --- list_all ---
+# ---------------------------------------------------------------------------
+# list_all — basic behavior
+# ---------------------------------------------------------------------------
 
 def test_list_all_returns_all_records(repo: EvaluationRepository):
     """
@@ -209,7 +264,9 @@ def test_list_all_orders_by_evaluated_at_desc(repo: EvaluationRepository):
     assert results[2].id == oldest.id
 
 
-# --- list_by_asin ---
+# ---------------------------------------------------------------------------
+# list_by_asin — basic behavior
+# ---------------------------------------------------------------------------
 
 def test_list_by_asin_filters_correctly(repo: EvaluationRepository):
     """
@@ -254,7 +311,9 @@ def test_list_by_asin_orders_by_evaluated_at_desc(repo: EvaluationRepository):
     assert results[1].id == earlier.id
 
 
-# --- Round-trip integrity ---
+# ---------------------------------------------------------------------------
+# Round-trip integrity
+# ---------------------------------------------------------------------------
 
 def test_recommendation_reasons_round_trip(repo: EvaluationRepository):
     """
@@ -292,7 +351,9 @@ def test_optional_fields_preserved_as_none(repo: EvaluationRepository):
     assert retrieved.amazon_review_rating is None
 
 
-# --- Factory override correctness ---
+# ---------------------------------------------------------------------------
+# Factory override correctness
+# ---------------------------------------------------------------------------
 
 def test_factory_override_replaces_default_field(repo: EvaluationRepository):
     """
@@ -308,7 +369,9 @@ def test_factory_override_replaces_default_field(repo: EvaluationRepository):
     assert retrieved.retailer_price == 99.99
 
 
-# --- Connection reliability ---
+# ---------------------------------------------------------------------------
+# Connection reliability
+# ---------------------------------------------------------------------------
 
 def test_repeated_operations_do_not_lock_database(repo: EvaluationRepository):
     """
@@ -327,38 +390,83 @@ def test_repeated_operations_do_not_lock_database(repo: EvaluationRepository):
         retrieved = repo.get_by_id(record.id)
         assert retrieved is not None
 
-def test_save_normalizes_timestamp_to_utc(
-    repo: EvaluationRepository,
-):
+
+# ---------------------------------------------------------------------------
+# list_all with limit
+# ---------------------------------------------------------------------------
+
+def test_list_all_with_limit_caps_results(repo: EvaluationRepository):
     """
-    save() should return the canonical UTC timestamp that was
-    written to the database, even when the input uses another zone.
+    list_all(limit=N) returns at most N records even when more exist.
     """
-    pacific_offset = timezone(timedelta(hours=-7))
-    local_time = datetime(
-        2026,
-        7,
-        13,
-        5,
-        0,
-        0,
-        tzinfo=pacific_offset,
-    )
+    for _ in range(5):
+        repo.save(make_record())
 
-    original = make_record(evaluated_at=local_time)
-    saved = repo.save(original)
-    retrieved = repo.get_by_id(saved.id)
+    results = repo.list_all(limit=3)
+    assert len(results) == 3
 
-    expected_utc = datetime(
-        2026,
-        7,
-        13,
-        12,
-        0,
-        0,
-        tzinfo=timezone.utc,
-    )
 
-    assert original.evaluated_at == local_time
-    assert saved.evaluated_at == expected_utc
-    assert retrieved.evaluated_at == expected_utc
+def test_list_all_with_limit_returns_newest_n(repo: EvaluationRepository):
+    """
+    list_all(limit=N) returns the N newest records, not arbitrary ones.
+    Ordering by evaluated_at DESC is preserved when limit is applied.
+    """
+    base = datetime(2026, 7, 13, 10, 0, 0, tzinfo=timezone.utc)
+    oldest = repo.save(make_record(evaluated_at=base))
+    middle = repo.save(make_record(evaluated_at=base + timedelta(hours=1)))
+    newest = repo.save(make_record(evaluated_at=base + timedelta(hours=2)))
+
+    results = repo.list_all(limit=2)
+
+    assert len(results) == 2
+    assert results[0].id == newest.id
+    assert results[1].id == middle.id
+    assert not any(r.id == oldest.id for r in results)
+
+
+def test_list_all_without_limit_returns_all_records(repo: EvaluationRepository):
+    """
+    list_all() with no argument returns every record, preserving backward
+    compatibility with callers that do not pass a limit.
+    """
+    for _ in range(5):
+        repo.save(make_record())
+
+    results = repo.list_all()
+    assert len(results) == 5
+
+
+def test_list_all_limit_zero_raises_value_error(repo: EvaluationRepository):
+    """
+    list_all(limit=0) must raise ValueError before executing any SQL.
+    Zero is not a meaningful page size and likely indicates a bug in
+    the calling code.
+    """
+    with pytest.raises(ValueError):
+        repo.list_all(limit=0)
+
+
+# ---------------------------------------------------------------------------
+# list_by_asin with limit
+# ---------------------------------------------------------------------------
+
+def test_list_by_asin_with_limit_caps_results(repo: EvaluationRepository):
+    """
+    list_by_asin(asin, limit=N) returns at most N records for that ASIN
+    even when more matching records exist.
+    """
+    for _ in range(5):
+        repo.save(make_record(asin="B000EXAMPLE"))
+
+    results = repo.list_by_asin("B000EXAMPLE", limit=2)
+    assert len(results) == 2
+    assert all(r.asin == "B000EXAMPLE" for r in results)
+
+
+def test_list_by_asin_limit_zero_raises_value_error(repo: EvaluationRepository):
+    """
+    list_by_asin(asin, limit=0) must raise ValueError before executing
+    any SQL. Zero is not a meaningful page size.
+    """
+    with pytest.raises(ValueError):
+        repo.list_by_asin("B000EXAMPLE", limit=0)
