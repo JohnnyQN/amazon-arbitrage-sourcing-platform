@@ -208,6 +208,66 @@ Once running:
 
 ---
 
+## Deployment
+
+The API can be deployed to Render using the native Python runtime and the repository's `render.yaml` Blueprint.
+
+### SQLite persistence limitation
+
+Render free web services use an ephemeral filesystem. The SQLite database stored at `/tmp/arbitrage.db` is therefore temporary.
+
+Local files are lost whenever the free service:
+
+- redeploys
+- restarts
+- spins down
+
+This means:
+
+- `POST /evaluate` works normally
+- The returned `evaluation_id` can be retrieved while the same instance remains active
+- History endpoints work during the current instance session
+- Evaluation history is erased after the service redeploys, restarts, or spins down
+
+This limitation is acceptable for a portfolio demonstration. Durable production history would require a persistent disk on a paid service or migration to a hosted database such as PostgreSQL.
+
+### Deploy with Render
+
+1. Push the deployment branch and merge it into `main`.
+2. Sign in to Render.
+3. Choose **New → Blueprint**.
+4. Connect the GitHub repository:
+   `JohnnyQN/amazon-arbitrage-sourcing-platform`
+5. Render will read `render.yaml` from the repository root.
+6. Review the proposed free web service.
+7. Click **Deploy Blueprint**.
+8. Wait for the service health check to pass.
+
+The Blueprint configures:
+
+| Setting | Value |
+|---|---|
+| Runtime | Python |
+| Plan | Free |
+| Python version | `3.13.14` |
+| Build command | `pip install -r requirements.txt` |
+| Start command | `uvicorn app.main:app --host 0.0.0.0 --port $PORT` |
+| Health-check path | `/health` |
+| Environment | `production` |
+| SQLite path | `/tmp/arbitrage.db` |
+
+Render supplies the `PORT` environment variable automatically.
+
+### Verify the public deployment
+
+Replace `<service-name>` with the Render service subdomain:
+
+```text
+https://<service-name>.onrender.com/health
+https://<service-name>.onrender.com/docs
+https://<service-name>.onrender.com/openapi.json
+
+
 ## Configuration
 
 The application reads configuration from environment variables. No `.env` file is automatically loaded — variables must be set in the shell session before starting the server.
@@ -241,7 +301,7 @@ Liveness probe. Does not query the database.
   "status": "ok",
   "application": "Amazon Arbitrage Sourcing Platform",
   "version": "0.1.0",
-  "environment": "development"
+  "environment": "production"
 }
 ```
 
