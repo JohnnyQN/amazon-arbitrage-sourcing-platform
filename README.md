@@ -180,6 +180,7 @@ amazon-arbitrage-sourcing-platform/
 ├── .github/
 │   └── workflows/
 │       └── ci.yml
+├── render.yaml                       # Render deployment Blueprint
 ├── pytest.ini
 ├── requirements.txt
 └── README.md
@@ -258,14 +259,11 @@ The Blueprint configures:
 
 Render supplies the `PORT` environment variable automatically.
 
-### Verify the public deployment
+### Live deployment
 
-Replace `<service-name>` with the Render service subdomain:
-
-```text
-https://<service-name>.onrender.com/health
-https://<service-name>.onrender.com/docs
-https://<service-name>.onrender.com/openapi.json
+- **API base URL:** https://amazon-arbitrage-sourcing-platform.onrender.com
+- **Swagger UI:** https://amazon-arbitrage-sourcing-platform.onrender.com/docs
+- **Health check:** https://amazon-arbitrage-sourcing-platform.onrender.com/health
 
 
 ## Configuration
