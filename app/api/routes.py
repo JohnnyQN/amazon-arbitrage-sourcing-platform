@@ -21,7 +21,7 @@ from app.services.exceptions import (
 from app.services.recommendation_engine import RecommendationConfig
 from app.services.sourcing_service import CostAssumptions, SourcingService
 
-router = APIRouter()
+router = APIRouter(tags=["Evaluations"])
 
 
 # ---------------------------------------------------------------------------
@@ -37,16 +37,25 @@ router = APIRouter()
 @router.get(
     "/evaluations",
     response_model=list[EvaluationRecordResponse],
+    summary="List evaluation history",
+    description=(
+        "Return all saved evaluations, newest first. "
+        "Results are capped by the `limit` parameter (default 50, max 200). "
+        "Returns an empty list when the database contains no evaluations."
+    ),
+    responses={
+        422: {"description": "limit is below 1 or above 200"},
+    },
 )
 def list_evaluations(
-    limit: int = Query(default=50, ge=1, le=200),
+    limit: int = Query(
+        default=50,
+        ge=1,
+        le=200,
+        description="Maximum number of records to return (1–200).",
+    ),
     repo: EvaluationRepository = Depends(get_evaluation_repository),
 ):
-    """
-    Return saved evaluations, newest first.
-    Results are capped by limit (default 50, min 1, max 200).
-    Returns an empty list when the database contains no evaluations.
-    """
     records = repo.list_all(limit=limit)
     return [EvaluationRecordResponse.model_validate(r) for r in records]
 
@@ -54,17 +63,26 @@ def list_evaluations(
 @router.get(
     "/evaluations/asin/{asin}",
     response_model=list[EvaluationRecordResponse],
+    summary="List evaluations by ASIN",
+    description=(
+        "Return evaluation history for a specific Amazon ASIN, newest first. "
+        "Returns an empty list when no records exist for the ASIN — not 404. "
+        "Results are capped by the `limit` parameter (default 50, max 200)."
+    ),
+    responses={
+        422: {"description": "limit is below 1 or above 200"},
+    },
 )
 def list_evaluations_by_asin(
     asin: str,
-    limit: int = Query(default=50, ge=1, le=200),
+    limit: int = Query(
+        default=50,
+        ge=1,
+        le=200,
+        description="Maximum number of records to return (1–200).",
+    ),
     repo: EvaluationRepository = Depends(get_evaluation_repository),
 ):
-    """
-    Return saved evaluations for a specific ASIN, newest first.
-    Returns an empty list when no records exist for the ASIN — not 404.
-    Results are capped by limit (default 50, min 1, max 200).
-    """
     records = repo.list_by_asin(asin, limit=limit)
     return [EvaluationRecordResponse.model_validate(r) for r in records]
 
@@ -72,16 +90,20 @@ def list_evaluations_by_asin(
 @router.get(
     "/evaluations/{evaluation_id}",
     response_model=EvaluationRecordResponse,
+    summary="Get evaluation by ID",
+    description=(
+        "Return a single complete evaluation snapshot by its database ID. "
+        "Includes all input assumptions, calculated profit fields, "
+        "Amazon listing snapshot, and recommendation."
+    ),
+    responses={
+        404: {"description": "No evaluation found with the given ID"},
+    },
 )
 def get_evaluation(
     evaluation_id: int,
     repo: EvaluationRepository = Depends(get_evaluation_repository),
 ):
-    """
-    Return a single evaluation snapshot by ID.
-    Returns 404 when no record exists with that ID.
-    The error detail includes the requested ID.
-    """
     record = repo.get_by_id(evaluation_id)
     if record is None:
         raise HTTPException(
@@ -95,20 +117,34 @@ def get_evaluation(
 # Sourcing evaluation
 # ---------------------------------------------------------------------------
 
-@router.post("/evaluate", response_model=EvaluateResponse)
+@router.post(
+    "/evaluate",
+    response_model=EvaluateResponse,
+    summary="Evaluate a product",
+    description=(
+        "Evaluate a retail product as an Amazon arbitrage opportunity. "
+        "Calculates true profitability after all cost assumptions and returns "
+        "a BUY / WATCH / PASS recommendation with explanation. "
+        "Successful evaluations are persisted and retrievable by `evaluation_id`. "
+        "Failed evaluations are not persisted.\n\n"
+        "**Note:** Amazon data currently comes from a mock provider. "
+        "Recognized ASINs are `B000EXAMPLE` and `B000TOASTER`."
+    ),
+    responses={
+        404: {"description": "ASIN not found in Amazon data"},
+        422: {
+            "description": (
+                "Missing ASIN, missing retailer price, "
+                "or invalid input values (negative fees, "
+                "cashback above 100%, sales tax above 30%, etc.)"
+            )
+        },
+    },
+)
 def evaluate_product(
     request: EvaluateRequest,
     repo: EvaluationRepository = Depends(get_evaluation_repository),
 ):
-    """
-    Evaluate a retail product as an Amazon arbitrage opportunity.
-    Returns profit analysis and Buy/Watch/Pass recommendation.
-    Persists successful evaluations and returns the generated evaluation_id.
-
-    Raises:
-        422 if the product is missing an ASIN or retailer price.
-        404 if the ASIN does not match a known Amazon listing.
-    """
     product = Product(
         name=request.product.name,
         brand=request.product.brand,
@@ -158,8 +194,6 @@ def evaluate_product(
     saved = repo.save(record)
 
     # Defensive guard — save() must always return a record with an ID.
-    # A missing ID indicates a bug in the repository layer and should
-    # fail loudly rather than return a response with a null evaluation_id.
     if saved.id is None:
         raise RuntimeError(
             "Evaluation repository returned a saved record without an ID. "

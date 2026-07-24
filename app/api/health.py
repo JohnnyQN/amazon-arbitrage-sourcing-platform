@@ -6,15 +6,19 @@ from app.schemas.health import HealthResponse
 router = APIRouter()
 
 
-@router.get("/health", response_model=HealthResponse)
+@router.get(
+    "/health",
+    response_model=HealthResponse,
+    summary="Health check",
+    description=(
+        "Lightweight liveness probe for deployment readiness checks. "
+        "Returns application metadata without querying the database. "
+        "Does not expose infrastructure details or secrets."
+    ),
+    tags=["Health"],
+)
 def health_check():
-    """
-    Lightweight health check endpoint for deployment readiness probes.
-
-    Returns 200 when the application process is running. Does not
-    perform a database query — infrastructure health is separate from
-    application health. Does not expose database paths or secrets.
-    """
+    """Return application status and metadata."""
     settings = get_settings()
     return HealthResponse(
         status="ok",
